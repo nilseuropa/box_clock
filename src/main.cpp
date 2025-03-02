@@ -4,17 +4,21 @@
 #include <Wire.h>
 #include <TimeLib.h>
 #include <DS1307RTC.h>
+#include <EEPROM.h>
 
 #include "pindefs.h"
 #include "button.h"
 #include "radio.h"
 #include "led.h"
 
-#define WAKE_TIME_SETTING   5000
-#define WAKE_TIME_CLOCK     15000
-#define DEFAULT_BRIGHTNESS  5
-#define ALARM_DURATION_MIN  10
-#define ONE_MINUTE          60000
+#define WAKE_TIME_SETTING    5000
+#define WAKE_TIME_CLOCK      15000
+#define DEFAULT_BRIGHTNESS   5
+#define ALARM_DURATION_MIN   10
+#define ONE_MINUTE           60000
+#define TICK                 1000
+#define ALARM_HOUR_ADDRESS   1
+#define ALARM_MINUTE_ADDRESS 2
 
 LedDisplay display = LedDisplay(DISPLAY_DATA, DISPLAY_RSEL, DISPLAY_CLK,
                                   DISPLAY_CE, DISPLAY_RES, 4); // 4 characters
@@ -43,6 +47,17 @@ enum OpModes{
   alarm = 4
 };
 
+enum ButtonEvents{
+  released = 0,
+  short_press = 1,
+  long_press = 2
+};
+
+void load_settings(){
+  alarm_time.Hour   = EEPROM.read(ALARM_HOUR_ADDRESS);
+  alarm_time.Minute = EEPROM.read(ALARM_MINUTE_ADDRESS);
+}
+
 void setup() {
   left_button.begin();
   right_button.begin();
@@ -52,6 +67,7 @@ void setup() {
   display.setBrightness(display_brightness);
   display.clear();
   wake_timer.set(WAKE_TIME_CLOCK);
+  load_settings();
   Serial.begin(115200);
 }
 
@@ -64,7 +80,7 @@ void reset_time(){
   time.Year = CalendarYrToTm(1981);
 }
 
-void pop_up_message(const char* message){
+void pop_up_message_scroll(const char* message){
   display_brightness = DEFAULT_BRIGHTNESS;
   display.setBrightness(display_brightness);
   display.home();
@@ -73,6 +89,14 @@ void pop_up_message(const char* message){
     display.scroll(-1);
     delay(250);
   }
+}
+
+void pop_up_message(const char* message){
+  display_brightness = DEFAULT_BRIGHTNESS;
+  display.setBrightness(display_brightness);
+  display.home();
+  display.print(message);
+  delay(1000);
 }
 
 void display_clock(int h, int m){
@@ -86,7 +110,7 @@ void display_clock(int h, int m){
 void display_alarm(){
   display.clear();
   display.home();
-  if (alarm_duration_minute>=10) display.print("00"); else display.print("000");
+  if (alarm_duration_minute>=10) display.print("T-"); else display.print(" T-");
   display.print(alarm_duration_minute);
 }
 
@@ -95,18 +119,37 @@ void set_appliance(bool state){
   power_socket.set(state);
 }
 
-void go_to_clock(){
+void reset_states(){
   display_brightness = DEFAULT_BRIGHTNESS;
   display.setBrightness(display_brightness);
   wake_timer.set(WAKE_TIME_CLOCK);
-  clock_timer.set(1000);
+  clock_timer.set(TICK);
+}
+
+void go_to_clock(){
+  left_button.reset_state();
+  right_button.reset_state();
+  reset_states();
   op_mode = clock;
 }
 
+void go_to_set_clock(){
+  pop_up_message_scroll("   Set time");
+  reset_states();
+  op_mode = set_clock;
+}
+
+void go_to_set_alarm(){
+  pop_up_message_scroll("   Set alarm");
+  reset_states();
+  op_mode = set_alarm;
+}
+
 void go_to_sleep(){
+  clock_timer.set(TICK);
   display_brightness = 0;
-  display.clear();
   display.setBrightness(display_brightness);
+  display.clear();
   status_led.off();
   op_mode = sleep;
 }
@@ -123,20 +166,21 @@ void loop() {
   switch (op_mode) {
 
     case sleep:
+      if (clock_timer.poll(1000)){ RTC.read(time); }
 
-      if (left_button.pressed() || right_button.pressed() ) { // wake up on button press
+      if (left_button.pressed() || right_button.pressed()) { // wake up on button press
         go_to_clock();
       }
 
       if (alarm_time.Hour == time.Hour && alarm_time.Minute == time.Minute) {
         set_appliance(true);
-        pop_up_message(" Rise and shine!");
+        pop_up_message_scroll("   Rise and shine!");
         go_to_alarm();
       }
       break;
 
     case alarm:
-      if (left_button.pressed() || right_button.pressed() ) { // escape alarm mode
+      if (left_button.pressed() || right_button.pressed()) {  // escape alarm mode
         set_appliance(false);
         go_to_clock();
       }
@@ -153,6 +197,9 @@ void loop() {
       break;
 
     case clock:
+      if (left_button.get_state()==long_press) go_to_set_clock();
+      if (right_button.get_state()==long_press) go_to_set_alarm();
+
       if (clock_timer.poll(1000)){ // tick a second
 
         if (RTC.read(time)) { // display real time
@@ -161,7 +208,7 @@ void loop() {
         }
         else { // can't read time off RTC
           if (RTC.chipPresent()) {
-            pop_up_message(" Time is not set.");
+            pop_up_message_scroll("   Time is not set.");
             reset_time();
             wake_timer.set(WAKE_TIME_SETTING);
             op_mode = set_clock;
@@ -203,10 +250,11 @@ void loop() {
 
         if (wake_timer.poll()) { // time's up for settings, saving time
           RTC.write(time);
+          pop_up_message("SAVE");
           go_to_clock();
         }
 
-        if (led_timer.poll(200)) status_led.pulse();
+        if (led_timer.poll(100)) status_led.pulse();
         break;
 
     case set_alarm:
@@ -223,6 +271,9 @@ void loop() {
       }
 
       if (wake_timer.poll()) {
+        EEPROM.update(ALARM_HOUR_ADDRESS, alarm_time.Hour);
+        EEPROM.update(ALARM_MINUTE_ADDRESS, alarm_time.Minute);
+        pop_up_message("SAVE");
         go_to_clock();
       }
 
