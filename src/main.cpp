@@ -87,7 +87,7 @@ void pop_up_message_scroll(const char* message){
   display.setString(message);
   for (uint8_t i=display.getCursor(); i<display.stringLength(); i++){
     display.scroll(-1);
-    delay(250);
+    delay(150);
   }
 }
 
@@ -124,6 +124,7 @@ void reset_states(){
   display.setBrightness(display_brightness);
   wake_timer.set(WAKE_TIME_CLOCK);
   clock_timer.set(TICK);
+  led_timer.set(100);
 }
 
 void go_to_clock(){
@@ -174,15 +175,20 @@ void loop() {
 
       if (alarm_time.Hour == time.Hour && alarm_time.Minute == time.Minute) {
         set_appliance(true);
-        pop_up_message_scroll("   Rise and shine!");
+        pop_up_message_scroll("   If you have been waiting for a sign, this is it!");
         go_to_alarm();
       }
       break;
 
     case alarm:
-      if (left_button.pressed() || right_button.pressed()) {  // escape alarm mode
+      if (left_button.pressed()) {  // escape alarm mode
         set_appliance(false);
         go_to_clock();
+      }
+
+      if (right_button.pressed()) {  // +10 Minutes
+        set_appliance(true);
+        go_to_alarm();
       }
 
       if (alarm_timer.poll(ONE_MINUTE)){ // refresh alarm screen each minute
@@ -244,7 +250,7 @@ void loop() {
         }
 
         if (right_button.pressed()) {
-          time.Minute++; if (time.Minute>60) time.Minute=0;
+          time.Minute++; if (time.Minute>59) time.Minute=0;
           wake_timer.set(WAKE_TIME_SETTING);
         }
 
